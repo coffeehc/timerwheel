@@ -73,7 +73,7 @@ func NewMonthSlot(location *time.Location) Slot {
 		location = defaultLocatioin
 	}
 	return &monthSlotImpl{
-		slotImpl: slotImpl{maxSlot: 31, currentSlot: 0},
+		slotImpl: slotImpl{maxSlot: 32, currentSlot: 1},
 		location: location,
 	}
 }
@@ -84,10 +84,10 @@ type monthSlotImpl struct {
 }
 
 func (impl *monthSlotImpl) NextSlot() (uint64, bool) {
-	slot := uint64(time.Now().In(impl.location).Add(time.Hour*24).Month()) - 1
-	return slot - 1, slot == 1
+	slot := uint64(time.Now().In(impl.location).Add(time.Hour * 24).Month())
+	return slot, slot == 1
 }
 
 func (impl *monthSlotImpl) initSlot(slot uint64) {
-	impl.currentSlot = uint64(time.Now().In(impl.location).Month()) - 1
+	impl.currentSlot = uint64(time.Now().In(impl.location).Month())
 }

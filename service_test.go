@@ -30,6 +30,7 @@ func TestNewService(t *testing.T) {
 		timerwheel.NewSlot(60),
 		timerwheel.NewSlot(24),
 		timerwheel.NewWeekSlot(),
+		timerwheel.NewMonthSlot(location),
 	}, time.Second, location)
 	if err != nil {
 		t.Errorf("err is %#v", err)
@@ -38,7 +39,7 @@ func TestNewService(t *testing.T) {
 	err = service.AddJob(&timerwheel.Job{
 		Id:      1,
 		Handler: buildJobHander(1),
-		Slots:   []string{"2,5,8,10", "*", "*", "6"},
+		Slots:   []string{"2,5,8,10,15,30,40,50,55", "*", "*", "6", "12"},
 	})
 	if err != nil {
 		t.Errorf("err is %#v", err)
