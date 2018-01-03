@@ -8,12 +8,12 @@ import (
 )
 
 type Wheel interface {
-	tick() []int64
+	tick() []string
 	AddJob(job *Job) (run bool)
-	RemoveJob(jobId int64)
+	RemoveJob(jobName string)
 	GetMaxSlot(level int) uint64
-	getNextSlotJobs() []int64
-	initSlot(slots []uint64) []int64
+	getNextSlotJobs() []string
+	initSlot(slots []uint64) []string
 }
 
 func newWheel(slot Slot, parent Wheel, level int, jobService JobService) (Wheel, error) {
@@ -23,8 +23,8 @@ func newWheel(slot Slot, parent Wheel, level int, jobService JobService) (Wheel,
 	return &wheelImpl{
 		parent:     parent,
 		level:      level,
-		jobs:       make([]int64, 0),
-		nextJobs:   make([]int64, 0),
+		jobs:       make([]string, 0),
+		nextJobs:   make([]string, 0),
 		mutex:      new(sync.Mutex),
 		jobService: jobService,
 		slot:       slot,
@@ -34,19 +34,19 @@ func newWheel(slot Slot, parent Wheel, level int, jobService JobService) (Wheel,
 type wheelImpl struct {
 	parent     Wheel
 	level      int
-	jobs       []int64
-	nextJobs   []int64
+	jobs       []string
+	nextJobs   []string
 	mutex      *sync.Mutex
 	jobService JobService
 	slot       Slot
 }
 
-func (impl *wheelImpl) initSlot(slots []uint64) []int64 {
+func (impl *wheelImpl) initSlot(slots []uint64) []string {
 	if impl.parent != nil {
 		impl.jobs = impl.parent.initSlot(slots)
 	}
 	impl.slot.initSlot(slots[impl.level])
-	jobs := make([]int64, 0)
+	jobs := make([]string, 0)
 	for _, i := range impl.jobs {
 		job := impl.jobService.Get(i)
 		if job != nil {
@@ -55,11 +55,11 @@ func (impl *wheelImpl) initSlot(slots []uint64) []int64 {
 			}
 		}
 	}
-	logger.Debug("wheel[%d] init slot,current slot is %d,jobs is %#v", impl.level, impl.slot.CurrentSlot(), impl.jobs)
+	logger.Debug("wheel[%d] init slot[%d],current slot is %d,jobs is %#v", impl.level, impl.slot.GetMax(), impl.slot.CurrentSlot(), impl.jobs)
 	return jobs
 }
 
-func (impl *wheelImpl) getNextSlotJobs() []int64 {
+func (impl *wheelImpl) getNextSlotJobs() []string {
 	impl.mutex.Lock()
 	defer impl.mutex.Unlock()
 	nextSlot, toZore := impl.slot.NextSlot()
@@ -68,7 +68,7 @@ func (impl *wheelImpl) getNextSlotJobs() []int64 {
 			impl.jobs = impl.parent.getNextSlotJobs()
 		}
 	}
-	jobs := make([]int64, 0)
+	jobs := make([]string, 0)
 	for _, i := range impl.jobs {
 		job := impl.jobService.Get(i)
 		if job != nil {
@@ -90,7 +90,7 @@ func (impl *wheelImpl) GetMaxSlot(level int) uint64 {
 	return impl.parent.GetMaxSlot(level)
 }
 
-func (impl *wheelImpl) tick() []int64 {
+func (impl *wheelImpl) tick() []string {
 	impl.mutex.Lock()
 	jobs := impl.nextJobs
 	impl.mutex.Unlock()
@@ -113,10 +113,10 @@ func (impl *wheelImpl) AddJob(job *Job) (run bool) {
 		run = impl.parent.AddJob(job)
 		impl.mutex.Unlock()
 		if run {
-			impl.jobs = append(impl.jobs, job.Id)
+			impl.jobs = append(impl.jobs, job.Name)
 		}
 	} else {
-		impl.jobs = append(impl.jobs, job.Id)
+		impl.jobs = append(impl.jobs, job.Name)
 		run = true
 	}
 	if run {
@@ -125,17 +125,20 @@ func (impl *wheelImpl) AddJob(job *Job) (run bool) {
 			impl.nextJobs = impl.getNextSlotJobs()
 		}()
 	}
-	logger.Debug("wheel[%d] add a job [%d],in current _slot[%d] run ? [%t]", impl.level, job.Id, impl.slot.CurrentSlot(), run)
-	logger.Debug("wheel[%d] jobs is [%q]", impl.level, impl.jobs)
+	if impl.parent == nil {
+		logger.Debug("wheel add a job [%s]", job.Name)
+	}
 	return
 }
 
-func (impl *wheelImpl) RemoveJob(jobId int64) {
-	logger.Debug("wheel[%d] remove a job [%d]", impl.level, jobId)
+func (impl *wheelImpl) RemoveJob(jobName string) {
+	if impl.parent == nil {
+		logger.Debug("wheel remove a job [%s]", jobName)
+	}
 	impl.mutex.Lock()
 	var i = -1
-	for j, _jobId := range impl.jobs {
-		if _jobId == jobId {
+	for j, _jobName := range impl.jobs {
+		if _jobName == jobName {
 			i = j
 			break
 		}
@@ -145,6 +148,6 @@ func (impl *wheelImpl) RemoveJob(jobId int64) {
 	}
 	impl.mutex.Unlock()
 	if impl.parent != nil {
-		impl.parent.RemoveJob(jobId)
+		impl.parent.RemoveJob(jobName)
 	}
 }

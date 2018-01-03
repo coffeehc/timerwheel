@@ -25,21 +25,25 @@ func TestGetField(t *testing.T) {
 func TestNewService(t *testing.T) {
 	logger.SetDefaultLevel("/", logger.LevelDebug)
 	var location, _ = time.LoadLocation("Asia/Shanghai")
-	service, err := timerwheel.NewService("test", []timerwheel.Slot{
-		timerwheel.NewSlot(60),
-		timerwheel.NewSlot(60),
-		timerwheel.NewSlot(24),
-		timerwheel.NewWeekSlot(),
-		timerwheel.NewMonthSlot(location),
-	}, time.Second, location)
+	service, err := timerwheel.NewService(&timerwheel.Config{
+		Name: "test",
+		WheelSlots: []timerwheel.Slot{
+			timerwheel.NewSlot(60),
+			timerwheel.NewSlot(60),
+			timerwheel.NewSlot(24),
+			timerwheel.NewWeekSlot(),
+			timerwheel.NewMonthSlot(location),
+		},
+		Precision: time.Second,
+		Location:  location})
 	if err != nil {
 		t.Errorf("err is %#v", err)
 		t.FailNow()
 	}
 	err = service.AddJob(&timerwheel.Job{
-		Id:      1,
+		Name:    "job-1",
 		Handler: buildJobHander(1),
-		Slots:   []string{"2,5,8,10,15,30,40,50,55", "*", "*", "6", "12"},
+		Slots:   []string{"2,5,8,10,15,30,40,50,55", "*", "*", "*", "*"},
 	})
 	if err != nil {
 		t.Errorf("err is %#v", err)
@@ -47,7 +51,7 @@ func TestNewService(t *testing.T) {
 	}
 	service.Start()
 	time.Sleep(time.Minute)
-	service.RemoveJob(1)
+	service.RemoveJob("job-1")
 	time.Sleep(time.Minute)
 }
 

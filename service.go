@@ -8,52 +8,51 @@ import (
 	"github.com/coffeehc/logger"
 )
 
-type JobHandler func(retryCount int64) (retry bool, err error)
-
-type Job struct {
-	Id         int64
-	Handler    JobHandler
-	MaxRetry   int64
-	Slots      []string //当slot为0的时候,表示在任何一个槽位都执行,槽位号从1开始
-	slots      []uint64
-	retryCount int64
+type Config struct {
+	Name       string
+	WheelSlots []Slot
+	Precision  time.Duration
+	Location   *time.Location
+	JobService JobService
 }
 
 type Service interface {
 	Start()
 	Stop()
 	AddJob(job *Job) error
-	RemoveJob(jobId int64)
+	RemoveJob(jobName string)
 }
 
-func NewService(name string, wheelSlots []Slot, precision time.Duration, location *time.Location) (Service, error) {
-	if location == nil {
-		location, _ = time.LoadLocation("Asia/Shanghai")
+func NewService(config *Config) (Service, error) {
+	if config.Location == nil {
+		config.Location, _ = time.LoadLocation("Asia/Shanghai")
 	}
-	if precision < time.Second {
+	if config.Precision < time.Second {
 		return nil, errors.New("时间精度必须大于等于一秒")
 	}
-	wheelCount := len(wheelSlots)
+	wheelCount := len(config.WheelSlots)
 	if wheelCount == 0 {
 		return nil, errors.New("没有定义任何一个时间轮")
 	}
+	if config.JobService == nil {
+		config.JobService = newJobService()
+	}
 	var rootWheel Wheel = nil
 	var err error
-	jobService := newJobService()
 	for i := wheelCount - 1; i >= 0; i-- {
-		rootWheel, err = newWheel(wheelSlots[i], rootWheel, i, jobService)
+		rootWheel, err = newWheel(config.WheelSlots[i], rootWheel, i, config.JobService)
 		if err != nil {
 			return nil, err
 		}
 	}
 	return &serviceImpl{
-		name:       name,
-		precision:  precision,
+		name:       config.Name,
+		precision:  config.Precision,
 		rootWheel:  rootWheel,
 		wheelCount: wheelCount,
-		jobService: jobService,
-		location:   location,
-		wheelSlots: wheelSlots,
+		jobService: config.JobService,
+		location:   config.Location,
+		wheelSlots: config.WheelSlots,
 	}, nil
 }
 
@@ -88,9 +87,9 @@ func (impl *serviceImpl) Start() {
 		prevSlot *= slot.GetMax()
 	}
 	logger.Debug("初始化slot为:%#v", slots)
-	jobIds := impl.rootWheel.initSlot(slots)
-	for _, jobId := range jobIds {
-		go impl.execJob(jobId)
+	jobNames := impl.rootWheel.initSlot(slots)
+	for _, jobName := range jobNames {
+		go impl.execJob(impl.jobService.Get(jobName))
 	}
 	logger.Info("启动时间轮[%s]服务", impl.name)
 	go impl.startTicker()
@@ -108,23 +107,23 @@ func (impl *serviceImpl) startTicker() {
 			logger.Info("停止时间轮服务")
 			return
 		case <-impl.ticker.C:
-			jobIds := impl.rootWheel.tick()
-			for _, jobId := range jobIds {
-				go impl.execJob(jobId)
+			jobs := impl.rootWheel.tick()
+			for _, jobName := range jobs {
+				go impl.execJob(impl.jobService.Get(jobName))
 			}
 		}
 	}
 }
 
-func (impl *serviceImpl) RemoveJob(jobId int64) {
-	if impl.jobService.Get(jobId) != nil {
-		impl.jobService.Remove(jobId)
-		impl.rootWheel.RemoveJob(jobId)
+func (impl *serviceImpl) RemoveJob(jobName string) {
+	if impl.jobService.Get(jobName) != nil {
+		impl.jobService.Remove(jobName)
+		impl.rootWheel.RemoveJob(jobName)
 	}
 }
 
 func (impl *serviceImpl) AddJob(job *Job) error {
-	if impl.jobService.Get(job.Id) != nil {
+	if impl.jobService.Get(job.Name) != nil {
 		return errors.New("该job已经存在")
 	}
 	if len(job.Slots) != impl.wheelCount {
@@ -147,29 +146,32 @@ func (impl *serviceImpl) AddJob(job *Job) error {
 	return nil
 }
 
-func (impl *serviceImpl) execJob(jobId int64) {
-	job := impl.jobService.Get(jobId)
+func (impl *serviceImpl) execJob(job *Job) {
 	if job == nil {
-
 		return
 	}
 	defer func() {
 		if err := recover(); err != nil {
 			job.retryCount++
+			logger.Error("job[%s]执行[%d次]失败:%#v", job.Name, job.retryCount, err)
 			if job.retryCount < job.MaxRetry {
-				go impl.execJob(jobId)
+				go impl.execJob(job)
+				return
 			}
-			logger.Error("执行job出错:%#v", err)
+			job.retryCount = 0
 		}
 	}()
 	retry, err := job.Handler(job.retryCount)
 	if err == nil {
+		job.retryCount = 0
 		return
 	}
-	logger.Error("job[%d]执行失败:%#v", job.Id, err)
+	logger.Error("job[%s]执行[%d次]失败:%#v", job.Name, job.retryCount, err)
 	job.retryCount++
 	if retry && job.retryCount < job.MaxRetry {
-		go impl.execJob(jobId)
+		go impl.execJob(job)
+		return
 	}
 	job.retryCount = 0
+
 }
